@@ -1,0 +1,57 @@
+name: GitHub Transport - HTTP Request
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_json:
+        description: Non-sensitive JSON request descriptor
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write request descriptor
+        shell: bash
+        env:
+          REQUEST_JSON: ${{ inputs.request_json }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'github-transport-http-request.json').write_text(
+              os.environ['REQUEST_JSON'], encoding='utf-8'
+          )
+          PY
+
+      - id: http
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: ${{ runner.temp }}/github-transport-http-request.json
+          output-dir: response
+          auth-profiles-json: ${{ secrets.HTTP_AUTH_PROFILES_JSON }}
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '### GitHub Transport HTTP response'
+            echo '- Status: ${{ steps.http.outputs.status }}'
+            echo '- Bytes: ${{ steps.http.outputs.bytes }}'
+            echo '- SHA-256: `${{ steps.http.outputs.sha256 }}`'
+            echo '- Elapsed: ${{ steps.http.outputs.elapsed_ms }} ms'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload response artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-transport-http-response-${{ github.run_id }}
+          path: response/
+          retention-days: 7
+          compression-level: 6
