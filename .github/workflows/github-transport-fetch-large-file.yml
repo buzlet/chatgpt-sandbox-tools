@@ -1,0 +1,56 @@
+name: GitHub Transport - Fetch Large File
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_json:
+        description: Non-sensitive JSON download descriptor
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write download descriptor
+        shell: bash
+        env:
+          REQUEST_JSON: ${{ inputs.request_json }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'github-transport-fetch-request.json').write_text(
+              os.environ['REQUEST_JSON'], encoding='utf-8'
+          )
+          PY
+
+      - id: fetch
+        uses: ./github-transport/actions/fetch-file
+        with:
+          request-file: ${{ runner.temp }}/github-transport-fetch-request.json
+          output-dir: download
+          auth-profiles-json: ${{ secrets.HTTP_AUTH_PROFILES_JSON }}
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '### GitHub Transport download'
+            echo '- File: `${{ steps.fetch.outputs.filename }}`'
+            echo '- Bytes: ${{ steps.fetch.outputs.bytes }}'
+            echo '- SHA-256: `${{ steps.fetch.outputs.sha256 }}`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload downloaded file
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-transport-fetched-file-${{ github.run_id }}
+          path: download/
+          retention-days: 7
+          compression-level: 0
