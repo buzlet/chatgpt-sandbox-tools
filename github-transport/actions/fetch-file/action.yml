@@ -1,0 +1,31 @@
+name: GitHub Transport Fetch File
+description: Download a large HTTP/HTTPS file with retries, resume and SHA-256 verification
+inputs:
+  request-file:
+    description: JSON download descriptor
+    required: true
+  output-dir:
+    description: Directory for downloaded file and metadata
+    required: false
+    default: download
+  auth-profiles-json:
+    description: JSON object mapping auth profile names to headers
+    required: false
+    default: ""
+outputs:
+  filename:
+    value: ${{ steps.fetch.outputs.filename }}
+  bytes:
+    value: ${{ steps.fetch.outputs.bytes }}
+  sha256:
+    value: ${{ steps.fetch.outputs.sha256 }}
+runs:
+  using: composite
+  steps:
+    - id: fetch
+      shell: bash
+      env:
+        REQUEST_FILE: ${{ inputs.request-file }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        HTTP_AUTH_PROFILES_JSON: ${{ inputs.auth-profiles-json }}
+      run: python3 "$GITHUB_ACTION_PATH/fetch_file.py"
