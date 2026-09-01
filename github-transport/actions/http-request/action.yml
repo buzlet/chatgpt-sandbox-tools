@@ -1,0 +1,33 @@
+name: GitHub Transport HTTP Request
+description: Execute an arbitrary HTTP request from a GitHub runner
+inputs:
+  request-file:
+    description: JSON request descriptor
+    required: true
+  output-dir:
+    description: Directory for response files
+    required: false
+    default: response
+  auth-profiles-json:
+    description: JSON object mapping auth profile names to headers
+    required: false
+    default: ""
+outputs:
+  status:
+    value: ${{ steps.request.outputs.status }}
+  bytes:
+    value: ${{ steps.request.outputs.bytes }}
+  sha256:
+    value: ${{ steps.request.outputs.sha256 }}
+  elapsed_ms:
+    value: ${{ steps.request.outputs.elapsed_ms }}
+runs:
+  using: composite
+  steps:
+    - id: request
+      shell: bash
+      env:
+        REQUEST_FILE: ${{ inputs.request-file }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        HTTP_AUTH_PROFILES_JSON: ${{ inputs.auth-profiles-json }}
+      run: python3 "$GITHUB_ACTION_PATH/http_request.py"
