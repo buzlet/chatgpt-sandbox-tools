@@ -1,0 +1,58 @@
+name: Cloudflare HTTP Relay - Deploy Temporary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate deployment token
+        shell: bash
+        run: |
+          token="$(python3 cloudflare-http-relay/generate_token.py)"
+          echo "::add-mask::$token"
+          echo "RELAY_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Deploy temporary Worker
+        shell: bash
+        run: |
+          set -o pipefail
+          npx --yes wrangler@^4.102.0 deploy \
+            --temporary \
+            --config cloudflare-http-relay/wrangler.jsonc \
+            --var "RELAY_TOKEN:$RELAY_TOKEN" \
+            2>&1 | tee "$RUNNER_TEMP/cloudflare-http-relay-deploy.log"
+
+      - name: Parse deployment
+        id: deployment
+        shell: bash
+        run: |
+          python3 cloudflare-http-relay/parse_deploy.py \
+            "$RUNNER_TEMP/cloudflare-http-relay-deploy.log" \
+            "$RUNNER_TEMP/cloudflare-http-relay-deployment.json"
+          worker_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["worker_url"])' "$RUNNER_TEMP/cloudflare-http-relay-deployment.json")"
+          echo "worker_url=$worker_url" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Temporary Cloudflare HTTP relay'
+            echo "- Worker: $worker_url"
+            echo '- Lifetime: approximately 60 minutes'
+            echo '- Relay token and claim URL are stored only in the authenticated artifact.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployment handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-http-relay-deployment-${{ github.run_id }}
+          path: ${{ runner.temp }}/cloudflare-http-relay-deployment.json
+          retention-days: 1
+          compression-level: 0
