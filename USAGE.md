@@ -10,6 +10,8 @@ The canonical private bootstrap file is stored in the user's ChatGPT Library at:
 
 The bootstrap contains this instruction URL/path plus any private runtime access data. Do not ask the user to paste Cloudflare credentials if the bootstrap is available.
 
+When a user names this exact Library path, retrieve it directly from Library. If semantic/title search has not indexed a newly updated file yet, list `/ChatGPT Tools` and select the exact path instead. Manual attachment to the current conversation is not required.
+
 Expected structure:
 
 ```json
@@ -18,9 +20,11 @@ Expected structure:
   "instructions": {
     "repository": "buzlet/chatgpt-sandbox-tools",
     "path": "USAGE.md",
-    "url": "https://github.com/buzlet/chatgpt-sandbox-tools/blob/main/USAGE.md"
+    "url": "https://github.com/buzlet/chatgpt-sandbox-tools/blob/main/USAGE.md",
+    "raw_url": "https://raw.githubusercontent.com/buzlet/chatgpt-sandbox-tools/main/USAGE.md"
   },
   "cloudflare": {
+    "status": "ready",
     "worker_url": "https://example.workers.dev",
     "relay_token": "secret",
     "expires_at": null
@@ -28,7 +32,7 @@ Expected structure:
 }
 ```
 
-If `expires_at` is non-null, verify that it is still valid. Never print `relay_token` unless explicitly requested. If credentials are missing or expired, do not invent them.
+If `expires_at` is non-null, verify that it is still valid. Never print `relay_token` unless explicitly requested. If credentials are missing, expired, or `status` is not `ready`, do not invent them.
 
 ## Cloudflare Relay
 
@@ -64,7 +68,7 @@ If the available GitHub connector cannot start the required workflow, do not sil
 
 The following are complete user requests when the bootstrap file is available:
 
-- `Выполни GET <URL> через Cloudflare Relay. Конфиг возьми из Library: /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
-- `Выполни POST <URL> с телом <BODY> через Cloudflare Relay. Конфиг возьми из Library: /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
-- `Скачай <URL> через Cloudflare Relay в sandbox. Конфиг возьми из Library: /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
-- `Скачай <URL> через GitHub transport в sandbox. Конфиг возьми из Library: /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
+- `Выполни GET <URL> через Cloudflare Relay. Конфиг: Library /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
+- `Выполни POST <URL> с телом <BODY> через Cloudflare Relay. Конфиг: Library /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
+- `Скачай <URL> через Cloudflare Relay в sandbox. Конфиг: Library /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
+- `Скачай <URL> через GitHub transport в sandbox. Конфиг: Library /ChatGPT Tools/chatgpt-sandbox-tools-access.json.`
