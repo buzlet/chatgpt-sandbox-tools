@@ -1,0 +1,155 @@
+# github-transport-selftest.yml
+name: GitHub transport self-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/github-transport-selftest.yml"
+      - "github-transport/actions/**"
+      - "github-transport/tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare request descriptors
+        shell: bash
+        run: |
+          mkdir -p .selftest/requests
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('.selftest/requests')
+          requests = {
+              'auth.json': {
+                  'method': 'GET',
+                  'url': 'https://httpbun.com/bearer/chatgpt-sandbox-selftest',
+                  'headers': {'Authorization': 'Bearer chatgpt-sandbox-selftest'},
+                  'expected_status': 200,
+              },
+              'post.json': {
+                  'method': 'POST',
+                  'url': 'https://httpbun.com/payload',
+                  'headers': {'Content-Type': 'application/json'},
+                  'body_json': {'probe': 'chatgpt-sandbox-tools', 'unicode': 'тест', 'n': 42},
+                  'expected_status': 200,
+              },
+              'put.json': {'method': 'PUT', 'url': 'https://httpbun.com/put', 'expected_status': 200},
+              'patch.json': {'method': 'PATCH', 'url': 'https://httpbun.com/patch', 'expected_status': 200},
+              'delete.json': {'method': 'DELETE', 'url': 'https://httpbun.com/delete', 'expected_status': 200},
+              'range1.json': {
+                  'url': 'https://httpbun.com/range/1000',
+                  'filename': 'range-1000.bin',
+                  'resume': False,
+                  'retries': 2,
+              },
+              'large.json': {
+                  'url': 'https://speed.cloudflare.com/__down?bytes=5242880',
+                  'filename': 'cloudflare-5m.bin',
+                  'resume': False,
+                  'retries': 2,
+                  'max_time_seconds': 120,
+              },
+          }
+          for name, value in requests.items():
+              (p / name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+
+      - name: Bearer-header request
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/auth.json
+          output-dir: .selftest/auth
+
+      - name: JSON POST round-trip
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/post.json
+          output-dir: .selftest/post
+
+      - name: PUT request
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/put.json
+          output-dir: .selftest/put
+
+      - name: PATCH request
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/patch.json
+          output-dir: .selftest/patch
+
+      - name: DELETE request
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/delete.json
+          output-dir: .selftest/delete
+
+      - name: Deterministic file download
+        id: range1
+        uses: ./github-transport/actions/fetch-file
+        with:
+          request-file: .selftest/requests/range1.json
+          output-dir: .selftest/range1
+
+      - name: Prepare expected-SHA request
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          meta = json.loads(Path('.selftest/range1/meta.json').read_text())
+          req = {
+              'url': 'https://httpbun.com/range/1000',
+              'filename': 'range-1000.bin',
+              'resume': False,
+              'retries': 2,
+              'sha256': meta['sha256'],
+          }
+          Path('.selftest/requests/range2.json').write_text(json.dumps(req, indent=2))
+          PY
+
+      - name: Download with SHA-256 verification
+        uses: ./github-transport/actions/fetch-file
+        with:
+          request-file: .selftest/requests/range2.json
+          output-dir: .selftest/range2
+
+      - name: Download external 5 MiB binary
+        uses: ./github-transport/actions/fetch-file
+        with:
+          request-file: .selftest/requests/large.json
+          output-dir: .selftest/large
+
+      - name: Verify complete suite
+        run: python3 github-transport/tests/verify_selftest.py
+
+      - name: Summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### GitHub transport self-test: PASS"
+            echo "- Bearer authentication header accepted by remote server"
+            echo "- JSON POST body survived round-trip"
+            echo "- PUT/PATCH/DELETE preserved"
+            echo "- Deterministic download passed SHA-256 verification"
+            echo "- 5 MiB external binary download verified"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload self-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-transport-selftest-${{ github.run_id }}
+          path: .selftest/
+          retention-days: 7
+          compression-level: 0
