@@ -90,14 +90,14 @@ def relay(method, target, rid, headers=None, body=b"", token=TOKEN, redirects=0)
 
 save_report()
 
-# Temporary relay Worker and its Durable Object binding are alive.
+# Temporary relay Worker and Durable Object are alive.
 status, _, _, health = read_json(WORKER + "/health")
 assert status == 200
 assert health["ok"] is True and health["protocol"] == 2
 assert health["storage"] == "durable-object" and health["logCapacity"] == 1000
 passed("health", health)
 
-# Provider 1: real outbound Internet plus UTF-8 JSON body handling.
+# Provider 1: outbound Internet plus UTF-8 JSON body handling.
 text_body = {"probe": "cloudflare-relay", "unicode": "тест", "n": 42}
 rid_post = "aa0000000001"
 status, _, _, response = relay(
@@ -110,7 +110,7 @@ assert response["rid"] == rid_post and response["bodyEncoding"] == "utf8"
 assert json.loads(response["body"]) == text_body
 passed("external_post_json_roundtrip", {"provider": "httpbun.com"})
 
-# Provider 2: prove that Authorization changes target behavior: 401 -> 200.
+# Provider 2: Authorization must alter target behavior: 401 -> 200.
 rid_auth_missing = "aa0000000002"
 status, _, _, response = relay("GET", "https://httpbin.org/bearer", rid_auth_missing)
 assert status == 200, f"relay transport HTTP={status}, body={response!r}"
@@ -126,7 +126,7 @@ assert status == 200, f"relay transport HTTP={status}, body={response!r}"
 assert response["status"] == 200, f"httpbin with bearer returned {response!r}"
 passed("authorization_header", {"provider": "httpbin.org", "withHeaderStatus": 200})
 
-# Provider 3: method matrix. /anything accepts these methods; /head is HEAD-only.
+# Provider 3: complete method matrix.
 method_results = {}
 expected_rids = {rid_post, rid_auth_missing, rid_auth}
 methods = ("GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS")
@@ -147,20 +147,21 @@ for index, method in enumerate(methods, start=4):
     method_results[method] = "ok"
 passed("method_matrix", {"provider": "httpcan.org", "methods": method_results})
 
-# Provider 4: raw-body echo. It returns request body verbatim, allowing exact binary verification.
+# Binary round-trip. httpbun /payload echoes the request entity verbatim and was
+# already proven reachable from Cloudflare Workers by the earlier E2E suite.
 binary = bytes(range(256)) * 4
 rid_binary = "aa0000000010"
 status, _, _, response = relay(
-    "POST", "https://devops-insights.com/api/echo.php", rid_binary,
+    "POST", "https://httpbun.com/payload", rid_binary,
     [["Content-Type", "application/octet-stream"]], binary,
 )
 assert status == 200 and response["status"] == 200, response
 assert response["bodyEncoding"] == "base64url", response
 assert rpc.b64u_decode(response["body"]) == binary
 expected_rids.add(rid_binary)
-passed("binary_roundtrip", {"provider": "devops-insights.com", "bytes": len(binary)})
+passed("binary_roundtrip", {"provider": "httpbun.com", "bytes": len(binary)})
 
-# Every authenticated proxy call must be queryable by agent; relay token must never be logged.
+# Every authenticated proxy call must be queryable by agent; token must not leak.
 log_url = (
     WORKER + "/log?k=" + urllib.parse.quote(TOKEN, safe="-._~")
     + "&format=json&type=all&limit=50&agent=" + urllib.parse.quote(AGENT, safe="-._~:")
@@ -174,7 +175,7 @@ assert TOKEN not in json.dumps(logs, ensure_ascii=False)
 count_before_invalid = logs["count"]
 passed("log_json", {"count": logs["count"], "rids": sorted(expected_rids)})
 
-# Invalid relay token is rejected before proxy execution and cannot evict a ring entry.
+# Invalid relay token is rejected before execution and cannot consume a log slot.
 rid_bad = "aa0000000011"
 status, _, _, bad = relay("GET", "https://httpbin.org/get", rid_bad, token="wrong-token")
 assert status == 403 and bad["ok"] is False
@@ -183,7 +184,7 @@ assert status == 200 and logs_after["count"] == count_before_invalid
 assert rid_bad not in {row["rid"] for row in logs_after["rows"]}
 passed("invalid_token_not_logged")
 
-# All authenticated calls, including target 401, count as successfully executed proxy operations.
+# All authenticated calls, including target HTTP 401, are executed proxy operations.
 stats_url = WORKER + "/log?k=" + urllib.parse.quote(TOKEN, safe="-._~") + "&format=json&type=stats&period=total&limit=1"
 status, _, _, stats = read_json(stats_url)
 assert status == 200 and stats["count"] == 1
@@ -191,7 +192,7 @@ assert stats["rows"][0]["requests"] >= len(expected_rids)
 assert stats["rows"][0]["success"] >= len(expected_rids)
 passed("total_stats", stats["rows"][0])
 
-# Human viewer removes token from the address bar and keeps it in a Secure HttpOnly cookie.
+# Browser viewer removes token from URL and keeps it in a Secure HttpOnly cookie.
 jar = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 human_url = WORKER + "/log?k=" + urllib.parse.quote(TOKEN, safe="-._~") + "&limit=2"
