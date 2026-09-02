@@ -66,14 +66,20 @@ jobs:
       - name: Wait for Worker health
         shell: bash
         run: |
-          for n in $(seq 1 20); do
+          successes=0
+          for n in $(seq 1 30); do
             if curl --fail --silent --show-error "$WORKER_URL/health" > "$RUNNER_TEMP/health.json"; then
-              cat "$RUNNER_TEMP/health.json"
-              exit 0
+              successes=$((successes+1))
+              if [ "$successes" -ge 3 ]; then
+                cat "$RUNNER_TEMP/health.json"
+                exit 0
+              fi
+            else
+              successes=0
             fi
-            sleep 2
+            sleep 1
           done
-          echo "Worker did not become healthy" >&2
+          echo "Worker did not stabilize across edge propagation" >&2
           exit 1
 
       - name: Run real relay end-to-end suite
@@ -104,6 +110,7 @@ jobs:
         with:
           name: cloudflare-http-relay-selftest-${{ github.run_id }}
           path: .selftest/cloudflare/
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 6
