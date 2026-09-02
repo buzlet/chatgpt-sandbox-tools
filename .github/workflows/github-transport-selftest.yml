@@ -151,5 +151,6 @@ jobs:
         with:
           name: github-transport-selftest-${{ github.run_id }}
           path: .selftest/
+          include-hidden-files: true
           retention-days: 7
           compression-level: 0
