@@ -29,6 +29,30 @@ jobs:
           from pathlib import Path
           p = Path('.selftest/requests')
           requests = {
+              'get-query.json': {
+                  'method': 'GET',
+                  'url': 'https://httpbin.org/anything/get-demo?alpha=one&n=42&unicode=%D1%82%D0%B5%D1%81%D1%82',
+                  'expected_status': 200,
+              },
+              'post-query-body.json': {
+                  'method': 'POST',
+                  'url': 'https://httpbin.org/anything/post-demo?mode=full&id=42',
+                  'headers': {'Content-Type': 'application/json'},
+                  'body_json': {'message': 'hello from github transport', 'unicode': 'тест', 'count': 3},
+                  'expected_status': 200,
+              },
+              'file-plain.json': {
+                  'url': 'https://httpbun.com/range/1000',
+                  'filename': 'plain-1000.bin',
+                  'resume': False,
+                  'retries': 2,
+              },
+              'file-query.json': {
+                  'url': 'https://httpbin.org/bytes/4096?seed=123',
+                  'filename': 'query-4096.bin',
+                  'resume': False,
+                  'retries': 2,
+              },
               'auth.json': {
                   'method': 'GET',
                   'url': 'https://httpbun.com/bearer/chatgpt-sandbox-selftest',
@@ -62,6 +86,30 @@ jobs:
           for name, value in requests.items():
               (p / name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
           PY
+
+      - name: Example 1 - GET with URL parameters
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/get-query.json
+          output-dir: .selftest/get-query
+
+      - name: Example 2 - POST with URL parameters and JSON body
+        uses: ./github-transport/actions/http-request
+        with:
+          request-file: .selftest/requests/post-query-body.json
+          output-dir: .selftest/post-query-body
+
+      - name: Example 3 - Download file without URL parameters
+        uses: ./github-transport/actions/fetch-file
+        with:
+          request-file: .selftest/requests/file-plain.json
+          output-dir: .selftest/file-plain
+
+      - name: Example 4 - Download file with URL parameters
+        uses: ./github-transport/actions/fetch-file
+        with:
+          request-file: .selftest/requests/file-query.json
+          output-dir: .selftest/file-query
 
       - name: Bearer-header request
         uses: ./github-transport/actions/http-request
@@ -138,6 +186,10 @@ jobs:
         run: |
           {
             echo "### GitHub transport self-test: PASS"
+            echo "- GET with URL/query parameters passed"
+            echo "- POST with URL/query parameters plus JSON body passed"
+            echo "- file download without URL parameters passed"
+            echo "- file download with URL/query parameters passed"
             echo "- Bearer authentication header accepted by remote server"
             echo "- JSON POST body survived round-trip"
             echo "- PUT/PATCH/DELETE preserved"
