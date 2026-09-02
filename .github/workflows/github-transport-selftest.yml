@@ -149,7 +149,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: github-transport-selftest-${{ github.run_id }}
+          name: github-transport-selftest-${{ github.run_id }}-${{ github.run_attempt }}
           path: .selftest/
           include-hidden-files: true
           retention-days: 7
