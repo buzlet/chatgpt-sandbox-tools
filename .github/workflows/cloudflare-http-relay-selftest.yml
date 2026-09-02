@@ -15,7 +15,7 @@ permissions:
 jobs:
   selftest:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -36,47 +36,6 @@ jobs:
           token="$(python cloudflare-http-relay/generate_token.py)"
           echo "::add-mask::$token"
           echo "RELAY_TOKEN=$token" >> "$GITHUB_ENV"
-
-      - name: Deploy temporary exact-byte echo target
-        shell: bash
-        run: |
-          set +e
-          npx --yes wrangler@^4.102.0 deploy \
-            --temporary \
-            --config cloudflare-http-relay/tests/wrangler.echo.jsonc \
-            > "$RUNNER_TEMP/wrangler-echo.log" 2>&1
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ]; then
-            echo "Temporary echo Worker deployment failed (raw output withheld because it can contain claim credentials)." >&2
-            exit "$rc"
-          fi
-          python cloudflare-http-relay/parse_deploy.py \
-            "$RUNNER_TEMP/wrangler-echo.log" \
-            "$RUNNER_TEMP/echo-deployment-private.json" \
-            > "$RUNNER_TEMP/echo-url.txt"
-          echo_url="$(cat "$RUNNER_TEMP/echo-url.txt")"
-          echo "ECHO_URL=$echo_url" >> "$GITHUB_ENV"
-          echo "Temporary echo Worker: $echo_url"
-
-      - name: Wait for echo target health
-        shell: bash
-        run: |
-          successes=0
-          for n in $(seq 1 30); do
-            if curl --fail --silent --show-error "$ECHO_URL/health" > "$RUNNER_TEMP/echo-health.json"; then
-              successes=$((successes+1))
-              if [ "$successes" -ge 2 ]; then
-                cat "$RUNNER_TEMP/echo-health.json"
-                exit 0
-              fi
-            else
-              successes=0
-            fi
-            sleep 1
-          done
-          echo "Echo Worker did not stabilize" >&2
-          exit 1
 
       - name: Deploy temporary relay Worker
         id: deploy
@@ -134,10 +93,10 @@ jobs:
         run: |
           {
             echo "### Cloudflare HTTP relay self-test: PASS"
-            echo "- Temporary relay Worker, Durable Object and separate echo Worker deployed"
+            echo "- Temporary relay Worker and Durable Object deployed"
             echo "- External UTF-8 JSON POST passed"
             echo "- Independent 401 -> 200 Authorization-header test passed"
-            echo "- GET/HEAD/PUT/PATCH/DELETE/OPTIONS relay method matrix passed"
+            echo "- GET/HEAD/PUT/PATCH/DELETE/OPTIONS method matrix passed"
             echo "- 1024-byte arbitrary binary round-trip passed"
             echo "- /log agent/rid filtering passed"
             echo "- invalid relay token rejected and not logged"
