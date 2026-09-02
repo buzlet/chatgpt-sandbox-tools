@@ -1,0 +1,109 @@
+# cloudflare-http-relay-selftest.yml
+name: Cloudflare HTTP relay self-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cloudflare-http-relay-selftest.yml"
+      - "cloudflare-http-relay/**"
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install sandbox codec dependency
+        run: python -m pip install --disable-pip-version-check brotli
+
+      - name: Generate one-time relay token
+        shell: bash
+        run: |
+          token="$(python cloudflare-http-relay/generate_token.py)"
+          echo "::add-mask::$token"
+          echo "RELAY_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Deploy temporary Worker
+        id: deploy
+        shell: bash
+        run: |
+          set +e
+          npx --yes wrangler@^4.102.0 deploy \
+            --temporary \
+            --config cloudflare-http-relay/wrangler.jsonc \
+            --var "RELAY_TOKEN:$RELAY_TOKEN" \
+            > "$RUNNER_TEMP/wrangler-deploy.log" 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "Wrangler temporary deployment failed (raw output withheld because it can contain claim credentials)." >&2
+            exit "$rc"
+          fi
+
+          python cloudflare-http-relay/parse_deploy.py \
+            "$RUNNER_TEMP/wrangler-deploy.log" \
+            "$RUNNER_TEMP/deployment-private.json" \
+            > "$RUNNER_TEMP/worker-url.txt"
+          worker="$(cat "$RUNNER_TEMP/worker-url.txt")"
+          echo "WORKER_URL=$worker" >> "$GITHUB_ENV"
+          echo "worker_url=$worker" >> "$GITHUB_OUTPUT"
+          echo "Temporary Worker: $worker"
+
+      - name: Wait for Worker health
+        shell: bash
+        run: |
+          for n in $(seq 1 20); do
+            if curl --fail --silent --show-error "$WORKER_URL/health" > "$RUNNER_TEMP/health.json"; then
+              cat "$RUNNER_TEMP/health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Worker did not become healthy" >&2
+          exit 1
+
+      - name: Run real relay end-to-end suite
+        env:
+          SELFTEST_DIR: .selftest/cloudflare
+        run: python cloudflare-http-relay/tests/e2e_selftest.py
+
+      - name: Summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Cloudflare HTTP relay self-test: PASS"
+            echo "- Temporary Cloudflare Worker and Durable Object deployed"
+            echo "- JSON POST round-trip passed"
+            echo "- Authorization header reached remote target"
+            echo "- PUT method preservation passed"
+            echo "- 1024-byte arbitrary binary round-trip passed"
+            echo "- /log agent/rid filtering passed"
+            echo "- invalid relay token rejected and not logged"
+            echo "- accumulated total statistics passed"
+            echo "- browser HTML log view and secure cookie passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload non-secret self-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-http-relay-selftest-${{ github.run_id }}
+          path: .selftest/cloudflare/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 6
