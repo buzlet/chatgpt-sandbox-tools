@@ -28,6 +28,42 @@ def sha256(path):
 
 results = {}
 
+# Canonical example 1: GET with URL/query parameters.
+get_meta = check_status("get-query")
+get_body = load_json(ROOT / "get-query" / "body.txt")
+assert get_body["method"] == "GET"
+assert get_body["args"] == {"alpha": "one", "n": "42", "unicode": "тест"}, get_body
+results["example_get_query"] = {"status": get_meta["status"], "args": get_body["args"]}
+
+# Canonical example 2: POST with URL/query parameters and JSON body.
+post_query_meta = check_status("post-query-body")
+post_query_body = load_json(ROOT / "post-query-body" / "body.txt")
+expected_query_json = {"message": "hello from github transport", "unicode": "тест", "count": 3}
+assert post_query_body["method"] == "POST"
+assert post_query_body["args"] == {"id": "42", "mode": "full"}, post_query_body
+assert post_query_body["json"] == expected_query_json, post_query_body
+results["example_post_query_body"] = {
+    "status": post_query_meta["status"],
+    "args": post_query_body["args"],
+    "json": post_query_body["json"],
+}
+
+# Canonical example 3: raw file download without URL/query parameters.
+plain_file = ROOT / "file-plain" / "plain-1000.bin"
+plain_meta = load_json(ROOT / "file-plain" / "meta.json")
+assert plain_file.stat().st_size == 1000
+assert plain_meta["bytes"] == 1000
+assert plain_meta["sha256"] == sha256(plain_file)
+results["example_file_plain"] = {"bytes": 1000, "sha256": plain_meta["sha256"]}
+
+# Canonical example 4: raw file download where URL contains query parameters.
+query_file = ROOT / "file-query" / "query-4096.bin"
+query_meta = load_json(ROOT / "file-query" / "meta.json")
+assert query_file.stat().st_size == 4096
+assert query_meta["bytes"] == 4096
+assert query_meta["sha256"] == sha256(query_file)
+results["example_file_query"] = {"bytes": 4096, "sha256": query_meta["sha256"]}
+
 # Authentication header must actually be accepted by the remote service.
 auth = check_status("auth")
 results["bearer_header"] = {"status": auth["status"], "bytes": auth["bytes"]}
@@ -69,7 +105,7 @@ results["large_download"] = {"bytes": expected_size, "sha256": actual_large_sha}
 
 report = {
     "ok": True,
-    "suite": "github-transport-selftest-v1",
+    "suite": "github-transport-selftest-v2",
     "results": results,
 }
 (ROOT / "selftest-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
