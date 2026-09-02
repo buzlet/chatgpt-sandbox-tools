@@ -27,7 +27,7 @@ CLIENT_HEADERS = {
 
 report = {
     "ok": False,
-    "suite": "cloudflare-http-relay-selftest-v1",
+    "suite": "cloudflare-http-relay-selftest-v2",
     "agent": AGENT,
     "checks": {},
 }
@@ -88,16 +88,74 @@ def relay(method, target, rid, headers=None, body=b"", token=TOKEN, redirects=0)
     return read_json(url)
 
 
+def relay_body_bytes(response):
+    if response["bodyEncoding"] == "base64url":
+        return rpc.b64u_decode(response["body"])
+    return response["body"].encode("utf-8")
+
+
 save_report()
 
-# Temporary relay Worker and Durable Object are alive.
+# Temporary relay Worker and its Durable Object binding are alive.
 status, _, _, health = read_json(WORKER + "/health")
 assert status == 200
 assert health["ok"] is True and health["protocol"] == 2
 assert health["storage"] == "durable-object" and health["logCapacity"] == 1000
 passed("health", health)
 
-# Provider 1: outbound Internet plus UTF-8 JSON body handling.
+expected_rids = set()
+
+# Canonical example 1: GET with URL/query parameters, preserving Unicode.
+rid_get_query = "bb0000000001"
+status, _, _, response = relay(
+    "GET",
+    "https://httpbin.org/anything/get-demo?alpha=one&n=42&unicode=%D1%82%D0%B5%D1%81%D1%82",
+    rid_get_query,
+)
+assert status == 200 and response["status"] == 200, response
+get_echo = json.loads(response["body"])
+assert get_echo["method"] == "GET"
+assert get_echo["args"] == {"alpha": "one", "n": "42", "unicode": "тест"}, get_echo
+expected_rids.add(rid_get_query)
+passed("example_get_query", {"args": get_echo["args"]})
+
+# Canonical example 2: POST with parameters in URL/query and JSON body.
+rid_post_query_body = "bb0000000002"
+example_post_body = {"message": "hello from cloudflare relay", "unicode": "тест", "count": 3}
+status, _, _, response = relay(
+    "POST",
+    "https://httpbin.org/anything/post-demo?mode=full&id=42",
+    rid_post_query_body,
+    [["Content-Type", "application/json"]],
+    json.dumps(example_post_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+)
+assert status == 200 and response["status"] == 200, response
+post_echo = json.loads(response["body"])
+assert post_echo["method"] == "POST"
+assert post_echo["args"] == {"id": "42", "mode": "full"}, post_echo
+assert post_echo["json"] == example_post_body, post_echo
+expected_rids.add(rid_post_query_body)
+passed("example_post_query_body", {"args": post_echo["args"], "json": post_echo["json"]})
+
+# Canonical example 3: download raw file bytes from URL without query parameters.
+rid_file_plain = "bb0000000003"
+status, _, _, response = relay("GET", "https://httpbin.org/bytes/1000", rid_file_plain)
+assert status == 200 and response["status"] == 200, response
+plain_bytes = relay_body_bytes(response)
+assert len(plain_bytes) == 1000, len(plain_bytes)
+expected_rids.add(rid_file_plain)
+passed("example_file_plain", {"bytes": len(plain_bytes)})
+
+# Canonical example 4: download raw file bytes where URL carries query parameters.
+rid_file_query = "bb0000000004"
+status, _, _, response = relay("GET", "https://httpbin.org/bytes/4096?seed=123", rid_file_query)
+assert status == 200 and response["status"] == 200, response
+query_bytes = relay_body_bytes(response)
+assert len(query_bytes) == 4096, len(query_bytes)
+expected_rids.add(rid_file_query)
+passed("example_file_query", {"bytes": len(query_bytes), "query": "seed=123"})
+
+# Provider 1: real outbound Internet plus UTF-8 JSON body handling.
 text_body = {"probe": "cloudflare-relay", "unicode": "тест", "n": 42}
 rid_post = "aa0000000001"
 status, _, _, response = relay(
@@ -108,13 +166,15 @@ status, _, _, response = relay(
 assert status == 200 and response["ok"] is True and response["status"] == 200
 assert response["rid"] == rid_post and response["bodyEncoding"] == "utf8"
 assert json.loads(response["body"]) == text_body
+expected_rids.add(rid_post)
 passed("external_post_json_roundtrip", {"provider": "httpbun.com"})
 
-# Provider 2: Authorization must alter target behavior: 401 -> 200.
+# Provider 2: prove that Authorization changes target behavior: 401 -> 200.
 rid_auth_missing = "aa0000000002"
 status, _, _, response = relay("GET", "https://httpbin.org/bearer", rid_auth_missing)
 assert status == 200, f"relay transport HTTP={status}, body={response!r}"
 assert response["status"] == 401, f"httpbin without bearer returned {response!r}"
+expected_rids.add(rid_auth_missing)
 passed("authorization_required", {"provider": "httpbin.org", "withoutHeaderStatus": 401})
 
 rid_auth = "aa0000000003"
@@ -124,11 +184,11 @@ status, _, _, response = relay(
 )
 assert status == 200, f"relay transport HTTP={status}, body={response!r}"
 assert response["status"] == 200, f"httpbin with bearer returned {response!r}"
+expected_rids.add(rid_auth)
 passed("authorization_header", {"provider": "httpbin.org", "withHeaderStatus": 200})
 
-# Provider 3: complete method matrix.
+# Provider 3: method matrix. /anything accepts these methods; /head is HEAD-only.
 method_results = {}
-expected_rids = {rid_post, rid_auth_missing, rid_auth}
 methods = ("GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS")
 for index, method in enumerate(methods, start=4):
     rid = f"aa{index:010d}"
@@ -147,8 +207,7 @@ for index, method in enumerate(methods, start=4):
     method_results[method] = "ok"
 passed("method_matrix", {"provider": "httpcan.org", "methods": method_results})
 
-# Binary round-trip. httpbun /payload echoes the request entity verbatim and was
-# already proven reachable from Cloudflare Workers by the earlier E2E suite.
+# Exact binary body round-trip through an external echo endpoint.
 binary = bytes(range(256)) * 4
 rid_binary = "aa0000000010"
 status, _, _, response = relay(
@@ -161,7 +220,7 @@ assert rpc.b64u_decode(response["body"]) == binary
 expected_rids.add(rid_binary)
 passed("binary_roundtrip", {"provider": "httpbun.com", "bytes": len(binary)})
 
-# Every authenticated proxy call must be queryable by agent; token must not leak.
+# Every authenticated proxy call must be queryable by agent; relay token must never be logged.
 log_url = (
     WORKER + "/log?k=" + urllib.parse.quote(TOKEN, safe="-._~")
     + "&format=json&type=all&limit=50&agent=" + urllib.parse.quote(AGENT, safe="-._~:")
@@ -175,7 +234,7 @@ assert TOKEN not in json.dumps(logs, ensure_ascii=False)
 count_before_invalid = logs["count"]
 passed("log_json", {"count": logs["count"], "rids": sorted(expected_rids)})
 
-# Invalid relay token is rejected before execution and cannot consume a log slot.
+# Invalid relay token is rejected before proxy execution and cannot evict a ring entry.
 rid_bad = "aa0000000011"
 status, _, _, bad = relay("GET", "https://httpbin.org/get", rid_bad, token="wrong-token")
 assert status == 403 and bad["ok"] is False
@@ -184,7 +243,7 @@ assert status == 200 and logs_after["count"] == count_before_invalid
 assert rid_bad not in {row["rid"] for row in logs_after["rows"]}
 passed("invalid_token_not_logged")
 
-# All authenticated calls, including target HTTP 401, are executed proxy operations.
+# All authenticated calls, including target 401, count as successfully executed proxy operations.
 stats_url = WORKER + "/log?k=" + urllib.parse.quote(TOKEN, safe="-._~") + "&format=json&type=stats&period=total&limit=1"
 status, _, _, stats = read_json(stats_url)
 assert status == 200 and stats["count"] == 1
@@ -192,7 +251,7 @@ assert stats["rows"][0]["requests"] >= len(expected_rids)
 assert stats["rows"][0]["success"] >= len(expected_rids)
 passed("total_stats", stats["rows"][0])
 
-# Browser viewer removes token from URL and keeps it in a Secure HttpOnly cookie.
+# Human viewer removes token from the address bar and keeps it in a Secure HttpOnly cookie.
 jar = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 human_url = WORKER + "/log?k=" + urllib.parse.quote(TOKEN, safe="-._~") + "&limit=2"
