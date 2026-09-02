@@ -46,6 +46,7 @@ jobs:
             --temporary \
             --config cloudflare-http-relay/wrangler.jsonc \
             --var "RELAY_TOKEN:$RELAY_TOKEN" \
+            --var "SELFTEST_MODE:1" \
             > "$RUNNER_TEMP/wrangler-deploy.log" 2>&1
           rc=$?
           set -e
@@ -94,9 +95,9 @@ jobs:
           {
             echo "### Cloudflare HTTP relay self-test: PASS"
             echo "- Temporary Cloudflare Worker and Durable Object deployed"
-            echo "- JSON POST round-trip passed"
-            echo "- Authorization header reached remote target"
-            echo "- PUT method preservation passed"
+            echo "- External UTF-8 JSON POST passed"
+            echo "- Independent 401 -> 200 Authorization-header test passed"
+            echo "- GET/HEAD/PUT/PATCH/DELETE/OPTIONS relay method matrix passed"
             echo "- 1024-byte arbitrary binary round-trip passed"
             echo "- /log agent/rid filtering passed"
             echo "- invalid relay token rejected and not logged"
