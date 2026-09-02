@@ -15,7 +15,7 @@ permissions:
 jobs:
   selftest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +37,48 @@ jobs:
           echo "::add-mask::$token"
           echo "RELAY_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Deploy temporary Worker
+      - name: Deploy temporary exact-byte echo target
+        shell: bash
+        run: |
+          set +e
+          npx --yes wrangler@^4.102.0 deploy \
+            --temporary \
+            --config cloudflare-http-relay/tests/wrangler.echo.jsonc \
+            > "$RUNNER_TEMP/wrangler-echo.log" 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "Temporary echo Worker deployment failed (raw output withheld because it can contain claim credentials)." >&2
+            exit "$rc"
+          fi
+          python cloudflare-http-relay/parse_deploy.py \
+            "$RUNNER_TEMP/wrangler-echo.log" \
+            "$RUNNER_TEMP/echo-deployment-private.json" \
+            > "$RUNNER_TEMP/echo-url.txt"
+          echo_url="$(cat "$RUNNER_TEMP/echo-url.txt")"
+          echo "ECHO_URL=$echo_url" >> "$GITHUB_ENV"
+          echo "Temporary echo Worker: $echo_url"
+
+      - name: Wait for echo target health
+        shell: bash
+        run: |
+          successes=0
+          for n in $(seq 1 30); do
+            if curl --fail --silent --show-error "$ECHO_URL/health" > "$RUNNER_TEMP/echo-health.json"; then
+              successes=$((successes+1))
+              if [ "$successes" -ge 2 ]; then
+                cat "$RUNNER_TEMP/echo-health.json"
+                exit 0
+              fi
+            else
+              successes=0
+            fi
+            sleep 1
+          done
+          echo "Echo Worker did not stabilize" >&2
+          exit 1
+
+      - name: Deploy temporary relay Worker
         id: deploy
         shell: bash
         run: |
@@ -46,12 +87,11 @@ jobs:
             --temporary \
             --config cloudflare-http-relay/wrangler.jsonc \
             --var "RELAY_TOKEN:$RELAY_TOKEN" \
-            --var "SELFTEST_MODE:1" \
             > "$RUNNER_TEMP/wrangler-deploy.log" 2>&1
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
-            echo "Wrangler temporary deployment failed (raw output withheld because it can contain claim credentials)." >&2
+            echo "Wrangler temporary relay deployment failed (raw output withheld because it can contain claim credentials)." >&2
             exit "$rc"
           fi
 
@@ -62,9 +102,9 @@ jobs:
           worker="$(cat "$RUNNER_TEMP/worker-url.txt")"
           echo "WORKER_URL=$worker" >> "$GITHUB_ENV"
           echo "worker_url=$worker" >> "$GITHUB_OUTPUT"
-          echo "Temporary Worker: $worker"
+          echo "Temporary relay Worker: $worker"
 
-      - name: Wait for Worker health
+      - name: Wait for relay Worker health
         shell: bash
         run: |
           successes=0
@@ -80,7 +120,7 @@ jobs:
             fi
             sleep 1
           done
-          echo "Worker did not stabilize across edge propagation" >&2
+          echo "Relay Worker did not stabilize across edge propagation" >&2
           exit 1
 
       - name: Run real relay end-to-end suite
@@ -94,7 +134,7 @@ jobs:
         run: |
           {
             echo "### Cloudflare HTTP relay self-test: PASS"
-            echo "- Temporary Cloudflare Worker and Durable Object deployed"
+            echo "- Temporary relay Worker, Durable Object and separate echo Worker deployed"
             echo "- External UTF-8 JSON POST passed"
             echo "- Independent 401 -> 200 Authorization-header test passed"
             echo "- GET/HEAD/PUT/PATCH/DELETE/OPTIONS relay method matrix passed"

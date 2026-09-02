@@ -1,0 +1,8 @@
+// wrangler.echo.jsonc
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chatgpt-http-relay-selftest-echo",
+  "main": "echo-worker.mjs",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true
+}

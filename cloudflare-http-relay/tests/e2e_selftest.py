@@ -14,6 +14,7 @@ sys.path.insert(0, str(HERE.parent))
 import rpc_sandbox as rpc
 
 WORKER = os.environ["WORKER_URL"].rstrip("/")
+ECHO = os.environ["ECHO_URL"].rstrip("/")
 TOKEN = os.environ["RELAY_TOKEN"]
 RUN_ID = os.environ.get("GITHUB_RUN_ID", "local")
 AGENT = f"selftest:{RUN_ID[-16:]}"
@@ -94,7 +95,7 @@ def response_headers(response):
 
 save_report()
 
-# Temporary Worker and its state binding are alive.
+# Temporary relay Worker and its Durable Object binding are alive.
 status, _, _, health = read_json(WORKER + "/health")
 assert status == 200
 assert health["ok"] is True and health["protocol"] == 2
@@ -131,8 +132,9 @@ assert response["status"] == 200, f"httpbin with bearer returned {response!r}"
 assert response["rid"] == rid_auth
 passed("authorization_header", {"withHeaderStatus": 200})
 
-# Deterministic exact semantics. The endpoint only exists on SELFTEST_MODE deployments.
-self_echo = WORKER + "/__selftest/echo"
+# Deterministic exact semantics against a second temporary Worker. This avoids
+# third-party echo quirks while still exercising a real outbound fetch.
+self_echo = ECHO + "/echo"
 method_results = {}
 expected_rids = {rid_post, rid_auth_missing, rid_auth}
 for index, method in enumerate(("GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"), start=4):
