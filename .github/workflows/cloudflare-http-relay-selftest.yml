@@ -108,7 +108,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflare-http-relay-selftest-${{ github.run_id }}
+          name: cloudflare-http-relay-selftest-${{ github.run_id }}-${{ github.run_attempt }}
           path: .selftest/cloudflare/
           include-hidden-files: true
           if-no-files-found: ignore
