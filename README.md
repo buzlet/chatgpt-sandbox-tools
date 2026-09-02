@@ -2,6 +2,8 @@
 
 A small toolbox for bridging ChatGPT's network-restricted sandbox to external services without requiring a custom MCP server.
 
+For ChatGPT agents, start with **[AGENT.md](AGENT.md)**. It is the concise operational entry point so user prompts can stay short.
+
 The repository is intentionally organized by utility. Each tool owns its implementation, tests/documentation, and any reusable actions. GitHub workflow files live in `.github/workflows/` because GitHub requires that location; their filenames are prefixed with the utility name.
 
 ## Utilities
