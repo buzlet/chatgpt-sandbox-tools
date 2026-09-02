@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,9 +30,30 @@ def read_url(url, opener=None):
         return e.code, e.geturl(), dict(e.headers.items()), e.read()
 
 
-def read_json(url, opener=None):
-    status, final_url, headers, raw = read_url(url, opener)
-    return status, final_url, headers, json.loads(raw.decode("utf-8"))
+def read_json(url, opener=None, attempts=10):
+    """Read JSON, retrying only transient temporary-Worker propagation failures."""
+    last = None
+    for attempt in range(attempts):
+        status, final_url, headers, raw = read_url(url, opener)
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            last = (status, raw[:200], error)
+            if url.startswith(WORKER) and attempt + 1 < attempts:
+                time.sleep(min(1 + attempt, 3))
+                continue
+            raise RuntimeError(f"non-JSON response: HTTP {status}, body={raw[:200]!r}") from error
+
+        # A temporary workers.dev hostname may briefly resolve to an edge that has
+        # not received the deployment yet. Application-level 4xx responses such as
+        # our intentional 403 must NOT be retried.
+        if url.startswith(WORKER) and status in {404, 502, 503, 504} and attempt + 1 < attempts:
+            last = (status, value, None)
+            time.sleep(min(1 + attempt, 3))
+            continue
+        return status, final_url, headers, value
+
+    raise RuntimeError(f"Worker did not stabilize: {last!r}")
 
 
 def relay(method, target, rid, headers=None, body=b"", token=TOKEN, redirects=0):
@@ -47,7 +69,7 @@ def relay(method, target, rid, headers=None, body=b"", token=TOKEN, redirects=0)
 
 report = {"ok": False, "suite": "cloudflare-http-relay-selftest-v1", "agent": AGENT, "checks": {}}
 
-# Worker and Durable Object deployment are alive.
+# Worker and Durable Object deployment are alive on the endpoint used by this client.
 status, _, _, health = read_json(WORKER + "/health")
 assert status == 200
 assert health["ok"] is True and health["protocol"] == 2
